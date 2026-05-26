@@ -13,16 +13,20 @@ let giocatoriStanza = [];
 let squadreStanza = null;
 let compagnoScelto = null;
 let partitaOnlineAvviata = false;
+let massimoGiocatoriStanza = 4;
 
 /*
     Flusso stanza:
     - il giocatore scrive prima il proprio nome.
     - il campo stanza parte vuoto.
-    - chi apre la partita scrive il nome stanza e clicca Crea stanza.
+    - chi apre la partita scrive il nome stanza.
+    - chi apre la partita sceglie se giocare in 2, 3 o 4.
+    - chi apre la partita clicca Crea stanza.
     - chi si unisce scrive lo stesso nome stanza e clicca Partecipa a stanza.
-    - quando la stanza arriva a 4 giocatori, il server manda "partita-iniziata".
+    - la partita parte automaticamente quando si raggiunge il numero scelto:
+      2/2, 3/3 oppure 4/4.
     - tutti vedono i nomi dei giocatori.
-    - P1 può scegliere il compagno.
+    - P1 può scegliere il compagno solo nella modalità a 4 giocatori.
     - il piantino viene mandato a tutti i giocatori della stanza.
 */
 
@@ -40,6 +44,16 @@ function testoSicuro(valore) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+function normalizzaMassimoGiocatori(valore) {
+    const numero = Number(valore);
+
+    if (numero === 2 || numero === 3 || numero === 4) {
+        return numero;
+    }
+
+    return 4;
 }
 
 function chiudiMessaggioAttesaStanza() {
@@ -80,9 +94,18 @@ function aggiornaPulsantiStanza(disabilitati) {
     });
 }
 
+function aggiornaSelettoreGiocatori(disabilitato) {
+    const selectMaxPlayers = document.getElementById("max-players");
+
+    if (selectMaxPlayers) {
+        selectMaxPlayers.disabled = disabilitato;
+    }
+}
+
 function preparaInterfacciaStanza() {
     const inputCodice = document.getElementById("room-code");
     const inputNome = document.getElementById("player-name");
+    const selectMaxPlayers = document.getElementById("max-players");
 
     if (inputCodice) {
         inputCodice.value = "";
@@ -100,14 +123,23 @@ function preparaInterfacciaStanza() {
             nomePlayer = inputNome.value.trim();
         });
     }
+
+    if (selectMaxPlayers) {
+        massimoGiocatoriStanza = normalizzaMassimoGiocatori(selectMaxPlayers.value);
+        selectMaxPlayers.addEventListener("change", () => {
+            massimoGiocatoriStanza = normalizzaMassimoGiocatori(selectMaxPlayers.value);
+        });
+    }
 }
 
 function leggiDatiStanza() {
     const inputCodice = document.getElementById("room-code");
     const inputNome = document.getElementById("player-name");
+    const selectMaxPlayers = document.getElementById("max-players");
 
     const codice = normalizzaNomeStanza(inputCodice ? inputCodice.value : "");
     const nome = inputNome ? inputNome.value.trim() : "";
+    const massimoGiocatori = normalizzaMassimoGiocatori(selectMaxPlayers ? selectMaxPlayers.value : 4);
 
     if (!nome) {
         alert("Inserisci prima il tuo nome giocatore");
@@ -127,7 +159,12 @@ function leggiDatiStanza() {
         return null;
     }
 
-    return { codice, nome };
+    if (![2, 3, 4].includes(massimoGiocatori)) {
+        alert("Scegli se giocare in 2, 3 o 4 giocatori");
+        return null;
+    }
+
+    return { codice, nome, massimoGiocatori };
 }
 
 function creaStanza() {
@@ -139,13 +176,19 @@ function creaStanza() {
 
     codiceStanza = dati.codice;
     nomePlayer = dati.nome;
+    massimoGiocatoriStanza = dati.massimoGiocatori;
+
     statoConnessioneStanza = "attesa";
     partitaOnlineAvviata = false;
     aggiornaPulsantiStanza(true);
+    aggiornaSelettoreGiocatori(true);
 
     setMessaggioStanza(
         "Creazione stanza...",
-        `Stanza: <strong>${testoSicuro(codiceStanza)}</strong>`
+        `
+            Stanza: <strong>${testoSicuro(codiceStanza)}</strong><br>
+            Giocatori richiesti: <strong>${massimoGiocatoriStanza}</strong>
+        `
     );
 
     socket.emit("crea-stanza", {
@@ -153,7 +196,9 @@ function creaStanza() {
         stanza: codiceStanza,
         room: codiceStanza,
         nome: nomePlayer,
-        playerName: nomePlayer
+        playerName: nomePlayer,
+        massimoGiocatori: massimoGiocatoriStanza,
+        maxPlayers: massimoGiocatoriStanza
     });
 }
 
@@ -166,9 +211,11 @@ function entraStanza() {
 
     codiceStanza = dati.codice;
     nomePlayer = dati.nome;
+
     statoConnessioneStanza = "attesa";
     partitaOnlineAvviata = false;
     aggiornaPulsantiStanza(true);
+    aggiornaSelettoreGiocatori(true);
 
     setMessaggioStanza(
         "Accesso alla stanza...",
@@ -205,6 +252,16 @@ function aggiornaDatiStanza(stato = {}) {
     if (stato.compagnoScelto !== undefined) {
         compagnoScelto = stato.compagnoScelto;
     }
+
+    if (stato.massimoGiocatori) {
+        massimoGiocatoriStanza = normalizzaMassimoGiocatori(stato.massimoGiocatori);
+
+        const selectMaxPlayers = document.getElementById("max-players");
+
+        if (selectMaxPlayers) {
+            selectMaxPlayers.value = String(massimoGiocatoriStanza);
+        }
+    }
 }
 
 function nomeDaIndice(playerIndex) {
@@ -231,6 +288,14 @@ function aggiornaNomiGiocatoriSchermo() {
         if (!nameEl) {
             continue;
         }
+
+        if (i >= massimoGiocatoriStanza) {
+            nameEl.innerText = "Posto non usato";
+            area.classList.add("player-disabled");
+            continue;
+        }
+
+        area.classList.remove("player-disabled");
 
         const nome = nomeDaIndice(i);
         const etichetta = i === mioPlayerIndex ? `${nome} (TU)` : nome;
@@ -275,6 +340,10 @@ function creaHTMLGiocatoriStanza(stato = {}) {
 }
 
 function creaHTMLSceltaCompagno() {
+    if (massimoGiocatoriStanza !== 4) {
+        return "";
+    }
+
     if (mioPlayerIndex !== 0) {
         return `<p>In attesa che il creatore scelga il compagno.</p>`;
     }
@@ -309,7 +378,7 @@ function mostraStatoAttesa(stato = {}) {
 
     const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
     const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || giocatoriStanza.length || 1;
-    const massimo = stato.massimoGiocatori || 4;
+    const massimo = stato.massimoGiocatori || massimoGiocatoriStanza || 4;
 
     setMessaggioStanza(
         `Stanza ${testoSicuro(nomeStanza)}`,
@@ -317,7 +386,7 @@ function mostraStatoAttesa(stato = {}) {
             Giocatori collegati: <strong>${giocatori}/${massimo}</strong>
             ${creaHTMLGiocatoriStanza(stato)}
             ${creaHTMLSceltaCompagno()}
-            <p>La partita parte automaticamente quando la stanza arriva a 4 giocatori.</p>
+            <p>La partita parte automaticamente quando la stanza arriva a ${massimo} giocatori.</p>
         `
     );
 }
@@ -325,15 +394,17 @@ function mostraStatoAttesa(stato = {}) {
 function gestisciIngressoRiuscito(stato = {}) {
     statoConnessioneStanza = "dentro";
     aggiornaPulsantiStanza(false);
+    aggiornaSelettoreGiocatori(true);
     aggiornaDatiStanza(stato);
 
     const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
     const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || giocatoriStanza.length || 1;
+    const massimo = stato.massimoGiocatori || massimoGiocatoriStanza || 4;
 
     const roomStatus = document.getElementById("room-status");
 
     if (roomStatus) {
-        roomStatus.innerText = `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
+        roomStatus.innerText = `Stanza ${nomeStanza}: ${giocatori}/${massimo} giocatori`;
     }
 
     aggiornaNomiGiocatoriSchermo();
@@ -341,6 +412,11 @@ function gestisciIngressoRiuscito(stato = {}) {
 }
 
 function scegliCompagno(playerIndex) {
+    if (massimoGiocatoriStanza !== 4) {
+        alert("Il compagno si sceglie solo nelle partite a 4 giocatori.");
+        return;
+    }
+
     if (mioPlayerIndex !== 0) {
         alert("Solo il creatore della stanza può scegliere il compagno.");
         return;
@@ -361,13 +437,14 @@ function avviaPartitaOnline(stato = {}) {
     statoConnessioneStanza = "in-partita";
     aggiornaDatiStanza(stato);
     aggiornaPulsantiStanza(false);
+    aggiornaSelettoreGiocatori(true);
     aggiornaNomiGiocatoriSchermo();
     chiudiMessaggioAttesaStanza();
 
     const roomStatus = document.getElementById("room-status");
 
     if (roomStatus) {
-        roomStatus.innerText = `Stanza ${codiceStanza}: partita iniziata`;
+        roomStatus.innerText = `Stanza ${codiceStanza}: partita iniziata (${massimoGiocatoriStanza} giocatori)`;
     }
 
     inizia();
@@ -376,6 +453,7 @@ function avviaPartitaOnline(stato = {}) {
 socket.on("stanza-creata", stato => {
     statoConnessioneStanza = "dentro";
     aggiornaPulsantiStanza(false);
+    aggiornaSelettoreGiocatori(true);
     aggiornaDatiStanza(stato);
 
     const nomeStanza = stato?.codice || stato?.stanza || stato?.room || codiceStanza;
@@ -384,6 +462,7 @@ socket.on("stanza-creata", stato => {
         "Stanza creata",
         `
             Nome stanza: <strong>${testoSicuro(nomeStanza)}</strong><br>
+            Giocatori richiesti: <strong>${massimoGiocatoriStanza}</strong><br>
             Condividi questo nome con chi vuole giocare con te.
         `
     );
@@ -404,17 +483,19 @@ socket.on("assegna-player", playerIndex => {
 socket.on("stato-stanza", stato => {
     statoConnessioneStanza = stato.partitaIniziata ? "in-partita" : "dentro";
     aggiornaPulsantiStanza(false);
+    aggiornaSelettoreGiocatori(true);
     aggiornaDatiStanza(stato);
 
     const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
     const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || giocatoriStanza.length || 1;
+    const massimo = stato.massimoGiocatori || massimoGiocatoriStanza || 4;
 
     const roomStatus = document.getElementById("room-status");
 
     if (roomStatus) {
         roomStatus.innerText = stato.partitaIniziata
-            ? `Stanza ${nomeStanza}: partita iniziata`
-            : `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
+            ? `Stanza ${nomeStanza}: partita iniziata (${massimo} giocatori)`
+            : `Stanza ${nomeStanza}: ${giocatori}/${massimo} giocatori`;
     }
 
     aggiornaNomiGiocatoriSchermo();
@@ -454,6 +535,7 @@ socket.on("mostra-piantino", dati => {
 socket.on("errore", msg => {
     if (statoConnessioneStanza === "attesa") {
         statoConnessioneStanza = "fuori";
+        aggiornaSelettoreGiocatori(false);
     }
 
     aggiornaPulsantiStanza(false);
@@ -463,6 +545,7 @@ socket.on("errore", msg => {
 socket.on("connect_error", () => {
     statoConnessioneStanza = "fuori";
     aggiornaPulsantiStanza(false);
+    aggiornaSelettoreGiocatori(false);
     alert("Connessione al server non riuscita. Riprova tra poco.");
 });
 
@@ -655,6 +738,11 @@ function applicaFixLayout() {
         .selected-team-btn {
             outline: 3px solid yellow;
             font-weight: bold;
+        }
+
+        .player-disabled {
+            opacity: 0.28;
+            filter: grayscale(1);
         }
 
         .piantino-label {
@@ -884,6 +972,14 @@ function squadraDi(pIdx) {
         }
     }
 
+    if (massimoGiocatoriStanza === 2) {
+        return pIdx === 0 ? 0 : 1;
+    }
+
+    if (massimoGiocatoriStanza === 3) {
+        return pIdx === 0 ? 0 : 1;
+    }
+
     return (pIdx === 0 || pIdx === 2) ? 0 : 1;
 }
 
@@ -953,6 +1049,13 @@ function render() {
         }
 
         area.className = `player-area ${turnoCorrente === i ? 'active' : ''}`;
+
+        if (i >= massimoGiocatoriStanza) {
+            area.classList.add("player-disabled");
+        } else {
+            area.classList.remove("player-disabled");
+        }
+
         hDiv.classList.toggle('hand-many-cards', mani[i].length > 3);
         hDiv.innerHTML = '';
 
