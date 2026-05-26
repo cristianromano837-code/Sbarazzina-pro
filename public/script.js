@@ -7,24 +7,23 @@ socket.on("connect", () => {
 let codiceStanza = "";
 let nomePlayer = "";
 let mioPlayerIndex = null;
-
-/*
-    Flusso corretto:
-    - creaStanza(): il primo giocatore crea una nuova stanza con nome + codice.
-    - entraStanza(): gli altri giocatori entrano in una stanza gia esistente.
-*/
-
 let statoConnessioneStanza = "fuori";
 
+let giocatoriStanza = [];
+let squadreStanza = null;
+let compagnoScelto = null;
+let partitaOnlineAvviata = false;
+
 /*
-    Flusso stanza aggiornato:
+    Flusso stanza:
     - il giocatore scrive prima il proprio nome.
-    - il campo stanza deve partire vuoto.
+    - il campo stanza parte vuoto.
     - chi apre la partita scrive il nome stanza e clicca Crea stanza.
     - chi si unisce scrive lo stesso nome stanza e clicca Partecipa a stanza.
-
-    Nota: al server inviamo ancora la chiave "codice" per restare compatibili
-    con il backend esistente, ma nell'interfaccia la trattiamo come nome stanza.
+    - quando la stanza arriva a 4 giocatori, il server manda "partita-iniziata".
+    - tutti vedono i nomi dei giocatori.
+    - P1 può scegliere il compagno.
+    - il piantino viene mandato a tutti i giocatori della stanza.
 */
 
 function normalizzaNomeStanza(valore) {
@@ -32,6 +31,15 @@ function normalizzaNomeStanza(valore) {
         .trim()
         .replace(/\s+/g, " ")
         .toUpperCase();
+}
+
+function testoSicuro(valore) {
+    return String(valore || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
 }
 
 function chiudiMessaggioAttesaStanza() {
@@ -132,11 +140,12 @@ function creaStanza() {
     codiceStanza = dati.codice;
     nomePlayer = dati.nome;
     statoConnessioneStanza = "attesa";
+    partitaOnlineAvviata = false;
     aggiornaPulsantiStanza(true);
 
     setMessaggioStanza(
         "Creazione stanza...",
-        `Stanza: <strong>${codiceStanza}</strong>`
+        `Stanza: <strong>${testoSicuro(codiceStanza)}</strong>`
     );
 
     socket.emit("crea-stanza", {
@@ -158,11 +167,12 @@ function entraStanza() {
     codiceStanza = dati.codice;
     nomePlayer = dati.nome;
     statoConnessioneStanza = "attesa";
+    partitaOnlineAvviata = false;
     aggiornaPulsantiStanza(true);
 
     setMessaggioStanza(
         "Accesso alla stanza...",
-        `Stanza: <strong>${codiceStanza}</strong>`
+        `Stanza: <strong>${testoSicuro(codiceStanza)}</strong>`
     );
 
     socket.emit("entra-stanza", {
@@ -179,12 +189,146 @@ function partecipaStanza() {
     entraStanza();
 }
 
+function aggiornaDatiStanza(stato = {}) {
+    if (stato.codice || stato.stanza || stato.room) {
+        codiceStanza = stato.codice || stato.stanza || stato.room;
+    }
+
+    if (Array.isArray(stato.giocatori)) {
+        giocatoriStanza = stato.giocatori;
+    }
+
+    if (stato.squadre) {
+        squadreStanza = stato.squadre;
+    }
+
+    if (stato.compagnoScelto !== undefined) {
+        compagnoScelto = stato.compagnoScelto;
+    }
+}
+
+function nomeDaIndice(playerIndex) {
+    const giocatore = giocatoriStanza.find(g => g.playerIndex === playerIndex);
+
+    if (giocatore && giocatore.nome) {
+        return giocatore.nome;
+    }
+
+    if (playerIndex === mioPlayerIndex && nomePlayer) {
+        return nomePlayer;
+    }
+
+    return `P${playerIndex + 1}`;
+}
+
+function aggiornaNomiGiocatoriSchermo() {
+    const posizioni = ["bottom", "left", "top", "right"];
+
+    for (let i = 0; i < 4; i++) {
+        const area = document.getElementById(`pos-${posizioni[i]}`);
+        const nameEl = area ? area.querySelector(".name") : null;
+
+        if (!nameEl) {
+            continue;
+        }
+
+        const nome = nomeDaIndice(i);
+        const etichetta = i === mioPlayerIndex ? `${nome} (TU)` : nome;
+
+        let squadraTxt = "";
+
+        if (squadreStanza && Array.isArray(squadreStanza.squadraA) && Array.isArray(squadreStanza.squadraB)) {
+            if (squadreStanza.squadraA.includes(i)) {
+                squadraTxt = " - Squadra A";
+            } else if (squadreStanza.squadraB.includes(i)) {
+                squadraTxt = " - Squadra B";
+            }
+        }
+
+        nameEl.innerText = `${etichetta}${squadraTxt}`;
+    }
+}
+
+function creaHTMLGiocatoriStanza(stato = {}) {
+    const giocatori = Array.isArray(stato.giocatori) ? stato.giocatori : giocatoriStanza;
+
+    if (!giocatori.length) {
+        return "<p>Nessun giocatore collegato.</p>";
+    }
+
+    return `
+        <div class="room-players-list">
+            ${giocatori.map(g => {
+                const nome = testoSicuro(g.nome || `P${g.playerIndex + 1}`);
+                let squadra = "";
+
+                if (squadreStanza && Array.isArray(squadreStanza.squadraA) && squadreStanza.squadraA.includes(g.playerIndex)) {
+                    squadra = " - Squadra A";
+                } else if (squadreStanza && Array.isArray(squadreStanza.squadraB) && squadreStanza.squadraB.includes(g.playerIndex)) {
+                    squadra = " - Squadra B";
+                }
+
+                return `<div>P${g.playerIndex + 1}: <strong>${nome}</strong>${squadra}</div>`;
+            }).join("")}
+        </div>
+    `;
+}
+
+function creaHTMLSceltaCompagno() {
+    if (mioPlayerIndex !== 0) {
+        return `<p>In attesa che il creatore scelga il compagno.</p>`;
+    }
+
+    const possibili = giocatoriStanza.filter(g => g.playerIndex !== 0);
+
+    if (!possibili.length) {
+        return `<p>Quando entrano gli altri giocatori potrai scegliere il compagno.</p>`;
+    }
+
+    return `
+        <div class="team-picker">
+            <p><strong>Scegli il tuo compagno di squadra:</strong></p>
+            <div class="team-picker-buttons">
+                ${possibili.map(g => {
+                    const selezionato = compagnoScelto === g.playerIndex ? "selected-team-btn" : "";
+                    return `
+                        <button class="${selezionato}" onclick="scegliCompagno(${g.playerIndex})">
+                            ${testoSicuro(g.nome || `P${g.playerIndex + 1}`)}
+                        </button>
+                    `;
+                }).join("")}
+            </div>
+        </div>
+    `;
+}
+
+function mostraStatoAttesa(stato = {}) {
+    if (partitaOnlineAvviata || stato.partitaIniziata) {
+        return;
+    }
+
+    const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
+    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || giocatoriStanza.length || 1;
+    const massimo = stato.massimoGiocatori || 4;
+
+    setMessaggioStanza(
+        `Stanza ${testoSicuro(nomeStanza)}`,
+        `
+            Giocatori collegati: <strong>${giocatori}/${massimo}</strong>
+            ${creaHTMLGiocatoriStanza(stato)}
+            ${creaHTMLSceltaCompagno()}
+            <p>La partita parte automaticamente quando la stanza arriva a 4 giocatori.</p>
+        `
+    );
+}
+
 function gestisciIngressoRiuscito(stato = {}) {
     statoConnessioneStanza = "dentro";
     aggiornaPulsantiStanza(false);
+    aggiornaDatiStanza(stato);
 
     const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
-    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || 1;
+    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || giocatoriStanza.length || 1;
 
     const roomStatus = document.getElementById("room-status");
 
@@ -192,22 +336,59 @@ function gestisciIngressoRiuscito(stato = {}) {
         roomStatus.innerText = `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
     }
 
-    setMessaggioStanza(
-        `Stanza ${nomeStanza}`,
-        `Giocatori collegati: ${giocatori}/4`
-    );
+    aggiornaNomiGiocatoriSchermo();
+    mostraStatoAttesa(stato);
+}
+
+function scegliCompagno(playerIndex) {
+    if (mioPlayerIndex !== 0) {
+        alert("Solo il creatore della stanza può scegliere il compagno.");
+        return;
+    }
+
+    socket.emit("scegli-compagno", {
+        playerIndex: playerIndex,
+        compagnoIndex: playerIndex
+    });
+}
+
+function avviaPartitaOnline(stato = {}) {
+    if (partitaOnlineAvviata) {
+        return;
+    }
+
+    partitaOnlineAvviata = true;
+    statoConnessioneStanza = "in-partita";
+    aggiornaDatiStanza(stato);
+    aggiornaPulsantiStanza(false);
+    aggiornaNomiGiocatoriSchermo();
+    chiudiMessaggioAttesaStanza();
+
+    const roomStatus = document.getElementById("room-status");
+
+    if (roomStatus) {
+        roomStatus.innerText = `Stanza ${codiceStanza}: partita iniziata`;
+    }
+
+    inizia();
 }
 
 socket.on("stanza-creata", stato => {
     statoConnessioneStanza = "dentro";
     aggiornaPulsantiStanza(false);
+    aggiornaDatiStanza(stato);
 
     const nomeStanza = stato?.codice || stato?.stanza || stato?.room || codiceStanza;
 
     setMessaggioStanza(
         "Stanza creata",
-        `Nome stanza: <strong>${nomeStanza}</strong><br>Condividi questo nome con chi vuole giocare con te.`
+        `
+            Nome stanza: <strong>${testoSicuro(nomeStanza)}</strong><br>
+            Condividi questo nome con chi vuole giocare con te.
+        `
     );
+
+    aggiornaNomiGiocatoriSchermo();
 });
 
 socket.on("entrato-stanza", gestisciIngressoRiuscito);
@@ -216,42 +397,65 @@ socket.on("join-ok", gestisciIngressoRiuscito);
 
 socket.on("assegna-player", playerIndex => {
     mioPlayerIndex = playerIndex;
+    aggiornaNomiGiocatoriSchermo();
     alert("Sei il giocatore P" + (playerIndex + 1));
 });
 
 socket.on("stato-stanza", stato => {
-    statoConnessioneStanza = "dentro";
+    statoConnessioneStanza = stato.partitaIniziata ? "in-partita" : "dentro";
     aggiornaPulsantiStanza(false);
+    aggiornaDatiStanza(stato);
 
     const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
-    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || 1;
+    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || giocatoriStanza.length || 1;
 
     const roomStatus = document.getElementById("room-status");
 
     if (roomStatus) {
-        roomStatus.innerText = `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
+        roomStatus.innerText = stato.partitaIniziata
+            ? `Stanza ${nomeStanza}: partita iniziata`
+            : `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
     }
 
-    setMessaggioStanza(
-        `Stanza ${nomeStanza}`,
-        `Giocatori collegati: ${giocatori}/4`
-    );
+    aggiornaNomiGiocatoriSchermo();
+
+    if (stato.partitaIniziata) {
+        chiudiMessaggioAttesaStanza();
+    } else {
+        mostraStatoAttesa(stato);
+    }
 });
 
-socket.on("partita-iniziata", () => {
-    chiudiMessaggioAttesaStanza();
+socket.on("squadre-aggiornate", stato => {
+    aggiornaDatiStanza(stato);
+    aggiornaNomiGiocatoriSchermo();
+
+    if (!partitaOnlineAvviata) {
+        mostraStatoAttesa(stato);
+    }
 });
 
-socket.on("start-partita", () => {
-    chiudiMessaggioAttesaStanza();
+socket.on("partita-iniziata", stato => {
+    avviaPartitaOnline(stato);
 });
 
-socket.on("game-started", () => {
-    chiudiMessaggioAttesaStanza();
+socket.on("start-partita", stato => {
+    avviaPartitaOnline(stato);
+});
+
+socket.on("game-started", stato => {
+    avviaPartitaOnline(stato);
+});
+
+socket.on("mostra-piantino", dati => {
+    mostraPiantinoLocale(dati);
 });
 
 socket.on("errore", msg => {
-    statoConnessioneStanza = "fuori";
+    if (statoConnessioneStanza === "attesa") {
+        statoConnessioneStanza = "fuori";
+    }
+
     aggiornaPulsantiStanza(false);
     alert(msg);
 });
@@ -416,6 +620,51 @@ function applicaFixLayout() {
             transition: left 520ms ease, top 520ms ease, transform 520ms ease, opacity 520ms ease;
         }
 
+        .room-players-list {
+            text-align: left;
+            margin: 10px auto;
+            max-width: 280px;
+            line-height: 1.45;
+        }
+
+        .team-picker {
+            margin-top: 12px;
+        }
+
+        .team-picker-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 6px;
+            margin-top: 8px;
+        }
+
+        .team-picker-buttons button {
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.35);
+        }
+
+        .selected-team-btn {
+            outline: 3px solid yellow;
+            font-weight: bold;
+        }
+
+        .piantino-label {
+            position: fixed;
+            left: 50%;
+            top: calc(50% + 74px);
+            transform: translateX(-50%);
+            z-index: 10000;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-weight: bold;
+            pointer-events: none;
+        }
+
         @media (max-width: 768px) {
             body {
                 overflow-x: hidden;
@@ -470,6 +719,7 @@ function applicaFixLayout() {
 document.addEventListener("DOMContentLoaded", () => {
     preparaInterfacciaStanza();
     applicaFixLayout();
+    aggiornaNomiGiocatoriSchermo();
 });
 
 function inizia() {
@@ -526,6 +776,7 @@ function preparaNuovaMano() {
         startBtn.style.display = 'none';
     }
 
+    aggiornaNomiGiocatoriSchermo();
     render();
     nuovaSmazzata();
 }
@@ -607,14 +858,21 @@ async function controllaAccusi(mano, pIdx) {
 }
 
 function squadraDi(pIdx) {
+    if (squadreStanza && Array.isArray(squadreStanza.squadraA) && Array.isArray(squadreStanza.squadraB)) {
+        if (squadreStanza.squadraA.includes(pIdx)) {
+            return 0;
+        }
+
+        if (squadreStanza.squadraB.includes(pIdx)) {
+            return 1;
+        }
+    }
+
     return (pIdx === 0 || pIdx === 2) ? 0 : 1;
 }
 
 function nomeGiocatore(pIdx) {
-    if (pIdx === mioPlayerIndex) return nomePlayer || "Tu";
-    if (pIdx === 1) return "P2";
-    if (pIdx === 2) return "P3";
-    return "P4";
+    return nomeDaIndice(pIdx);
 }
 
 function aspetta(ms) {
@@ -645,6 +903,7 @@ function rectDaElemento(el) {
 
 function render() {
     aggiornaScalaCarte();
+    aggiornaNomiGiocatoriSchermo();
 
     const tDiv = document.getElementById('tavolo-carte');
 
@@ -1235,13 +1494,30 @@ function mostraTabellaFinale(righe, puntiMano) {
 }
 
 function mostraPiantino() {
+    if (statoConnessioneStanza === "dentro" || statoConnessioneStanza === "in-partita") {
+        socket.emit("piantino");
+        return;
+    }
+
+    mostraPiantinoLocale({
+        nome: nomePlayer || "Giocatore"
+    });
+}
+
+function mostraPiantinoLocale(dati = {}) {
     const piantino = document.createElement("div");
     piantino.className = "piantino-emoji";
     piantino.innerText = "😭";
 
+    const label = document.createElement("div");
+    label.className = "piantino-label";
+    label.innerText = `${dati.nome || "Giocatore"} ha fatto piantino`;
+
     document.body.appendChild(piantino);
+    document.body.appendChild(label);
 
     setTimeout(() => {
         piantino.remove();
+        label.remove();
     }, 1800);
 }
