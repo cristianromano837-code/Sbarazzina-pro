@@ -48,6 +48,16 @@ function normalizzaCodiceStanza(valore) {
         .toUpperCase();
 }
 
+function normalizzaMassimoGiocatori(valore) {
+    const numero = Number(valore);
+
+    if (numero === 2 || numero === 3 || numero === 4) {
+        return numero;
+    }
+
+    return 4;
+}
+
 function pulisciDatiStanza(dati = {}) {
     const codice = normalizzaCodiceStanza(
         dati.codice || dati.stanza || dati.room || ""
@@ -57,7 +67,15 @@ function pulisciDatiStanza(dati = {}) {
         dati.nome || dati.playerName || ""
     ).trim();
 
-    return { codice, nome };
+    const massimoGiocatori = normalizzaMassimoGiocatori(
+        dati.massimoGiocatori ||
+        dati.maxPlayers ||
+        dati.numeroGiocatori ||
+        dati.players ||
+        4
+    );
+
+    return { codice, nome, massimoGiocatori };
 }
 
 function giocatoriPuliti(stanza) {
@@ -65,18 +83,61 @@ function giocatoriPuliti(stanza) {
         socketId: g.socketId,
         playerIndex: g.playerIndex,
         nome: g.nome,
-        squadra: g.squadra
+        squadra: g.squadra,
+        online: true
     }));
 }
 
 function calcolaSquadre(stanza) {
-    if (!stanza || stanza.giocatori.length < 4) {
+    if (!stanza) {
         return {
             squadraA: [],
             squadraB: []
         };
     }
 
+    const massimoGiocatori = stanza.massimoGiocatori || 4;
+
+    /*
+        Modalità 2 giocatori:
+        P1 contro P2
+    */
+    if (massimoGiocatori === 2) {
+        stanza.giocatori.forEach(g => {
+            g.squadra = g.playerIndex === 0 ? 0 : 1;
+        });
+
+        stanza.squadre = {
+            squadraA: [0],
+            squadraB: [1]
+        };
+
+        return stanza.squadre;
+    }
+
+    /*
+        Modalità 3 giocatori:
+        P1 da solo contro P2 + P3.
+        È la soluzione più semplice senza riscrivere tutto il motore.
+    */
+    if (massimoGiocatori === 3) {
+        stanza.giocatori.forEach(g => {
+            g.squadra = g.playerIndex === 0 ? 0 : 1;
+        });
+
+        stanza.squadre = {
+            squadraA: [0],
+            squadraB: [1, 2]
+        };
+
+        return stanza.squadre;
+    }
+
+    /*
+        Modalità 4 giocatori:
+        P1 sceglie il compagno.
+        Se non sceglie nessuno, default P1 + P3 contro P2 + P4.
+    */
     let compagno = stanza.compagnoScelto;
 
     if (
@@ -107,25 +168,35 @@ function calcolaSquadre(stanza) {
     return stanza.squadre;
 }
 
-function inviaStatoStanza(codice) {
+function creaDatiStanza(codice) {
     const stanza = stanze[codice];
 
     if (!stanza) {
-        return;
+        return null;
     }
 
     const squadre = calcolaSquadre(stanza);
 
-    io.to(codice).emit("stato-stanza", {
+    return {
         codice: codice,
         giocatoriConnessi: stanza.giocatori.length,
-        massimoGiocatori: 4,
+        massimoGiocatori: stanza.massimoGiocatori,
         partitaIniziata: stanza.partitaIniziata,
         creatorePlayerIndex: 0,
         compagnoScelto: stanza.compagnoScelto,
         squadre: squadre,
         giocatori: giocatoriPuliti(stanza)
-    });
+    };
+}
+
+function inviaStatoStanza(codice) {
+    const dati = creaDatiStanza(codice);
+
+    if (!dati) {
+        return;
+    }
+
+    io.to(codice).emit("stato-stanza", dati);
 }
 
 function avviaPartitaSeStanzaPiena(codice) {
@@ -139,24 +210,13 @@ function avviaPartitaSeStanzaPiena(codice) {
         return;
     }
 
-    if (stanza.giocatori.length < 4) {
+    if (stanza.giocatori.length < stanza.massimoGiocatori) {
         return;
     }
 
     stanza.partitaIniziata = true;
 
-    const squadre = calcolaSquadre(stanza);
-
-    const datiPartita = {
-        codice: codice,
-        giocatoriConnessi: stanza.giocatori.length,
-        massimoGiocatori: 4,
-        partitaIniziata: true,
-        creatorePlayerIndex: 0,
-        compagnoScelto: stanza.compagnoScelto,
-        squadre: squadre,
-        giocatori: giocatoriPuliti(stanza)
-    };
+    const datiPartita = creaDatiStanza(codice);
 
     io.to(codice).emit("stato-stanza", datiPartita);
 
@@ -164,7 +224,9 @@ function avviaPartitaSeStanzaPiena(codice) {
     io.to(codice).emit("start-partita", datiPartita);
     io.to(codice).emit("game-started", datiPartita);
 
-    console.log(`Partita avviata nella stanza ${codice}`);
+    console.log(
+        `Partita avviata nella stanza ${codice} con ${stanza.giocatori.length}/${stanza.massimoGiocatori} giocatori`
+    );
 }
 
 function aggiungiGiocatoreAllaStanza(socket, codice, nome) {
@@ -180,7 +242,7 @@ function aggiungiGiocatoreAllaStanza(socket, codice, nome) {
         return;
     }
 
-    if (stanza.giocatori.length >= 4) {
+    if (stanza.giocatori.length >= stanza.massimoGiocatori) {
         socket.emit("errore", "La stanza è piena");
         return;
     }
@@ -216,13 +278,18 @@ function aggiungiGiocatoreAllaStanza(socket, codice, nome) {
         playerIndex: playerIndex,
         nome: nome,
         giocatoriConnessi: stanza.giocatori.length,
-        massimoGiocatori: 4,
-        giocatori: giocatoriPuliti(stanza)
+        massimoGiocatori: stanza.massimoGiocatori,
+        giocatori: giocatoriPuliti(stanza),
+        squadre: calcolaSquadre(stanza),
+        compagnoScelto: stanza.compagnoScelto,
+        partitaIniziata: stanza.partitaIniziata
     });
 
     inviaStatoStanza(codice);
 
-    console.log(`Giocatore ${nome} P${playerIndex + 1} entrato nella stanza ${codice}`);
+    console.log(
+        `Giocatore ${nome} P${playerIndex + 1} entrato nella stanza ${codice} (${stanza.giocatori.length}/${stanza.massimoGiocatori})`
+    );
 
     avviaPartitaSeStanzaPiena(codice);
 }
@@ -251,6 +318,10 @@ function rimuoviGiocatoreDaStanza(socket) {
             return;
         }
 
+        /*
+            Se qualcuno esce, fermiamo lo stato partita.
+            Così la stanza può tornare in attesa.
+        */
         stanza.partitaIniziata = false;
 
         stanza.giocatori.forEach((g, index) => {
@@ -275,7 +346,7 @@ io.on("connection", socket => {
     socket.on("crea-stanza", dati => {
         console.log("RICHIESTA CREA STANZA:", dati);
 
-        const { codice, nome } = pulisciDatiStanza(dati);
+        const { codice, nome, massimoGiocatori } = pulisciDatiStanza(dati);
 
         if (!nome) {
             socket.emit("errore", "Inserisci il nome del giocatore");
@@ -300,6 +371,7 @@ io.on("connection", socket => {
         stanze[codice] = {
             codice: codice,
             giocatori: [],
+            massimoGiocatori: massimoGiocatori,
             partitaIniziata: false,
             compagnoScelto: null,
             squadre: {
@@ -311,12 +383,13 @@ io.on("connection", socket => {
         socket.emit("stanza-creata", {
             codice: codice,
             giocatoriConnessi: 0,
-            massimoGiocatori: 4
+            massimoGiocatori: massimoGiocatori,
+            partitaIniziata: false
         });
 
         aggiungiGiocatoreAllaStanza(socket, codice, nome);
 
-        console.log(`Stanza ${codice} creata da ${nome}`);
+        console.log(`Stanza ${codice} creata da ${nome} per ${massimoGiocatori} giocatori`);
     });
 
     socket.on("entra-stanza", dati => {
@@ -351,6 +424,11 @@ io.on("connection", socket => {
         }
 
         const stanza = stanze[codice];
+
+        if (stanza.massimoGiocatori !== 4) {
+            socket.emit("errore", "La scelta del compagno è disponibile solo nelle partite a 4 giocatori");
+            return;
+        }
 
         if (socket.data.playerIndex !== 0) {
             socket.emit("errore", "Solo il creatore della stanza può scegliere il compagno");
@@ -395,7 +473,9 @@ io.on("connection", socket => {
             codice: codice,
             compagnoScelto: stanza.compagnoScelto,
             squadre: squadre,
-            giocatori: giocatoriPuliti(stanza)
+            giocatori: giocatoriPuliti(stanza),
+            massimoGiocatori: stanza.massimoGiocatori,
+            partitaIniziata: stanza.partitaIniziata
         });
 
         inviaStatoStanza(codice);
