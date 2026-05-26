@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sbarazzina Pro</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="game-world">
+        <div id="ui-layer">
+            <div class="score">
+                Squadra A: <span id="pA">0</span> | Squadra B: <span id="pB">0</span>
+            </div>
+
+            <button id="piantino-btn" onclick="mostraPiantino()">PIANTINO 😭</button>
+
+            <div id="online-panel">
+                <input id="player-name" placeholder="Nome giocatore">
+                <input id="room-code" placeholder="Codice stanza" value="AMICI">
+
+                <button onclick="creaStanza()">CREA STANZA</button>
+                <button onclick="entraStanza()">ENTRA STANZA</button>
+
+                <span id="room-status">Non connesso</span>
+            </div>
+
+            <button id="start-btn" onclick="inizia()">NUOVA PARTITA LOCALE</button>
+        </div>
+
+        <div id="table">
+            <div id="pos-top" class="player-area">
+                <div class="name">Compagno (P3)</div>
+                <div id="hand-2" class="hand-row opponent-hand"></div>
+            </div>
+            
+            <div id="pos-left" class="player-area">
+                <div class="name">Avversario (P2)</div>
+                <div id="hand-1" class="hand-col opponent-hand"></div>
+            </div>
+
+            <div id="pos-right" class="player-area">
+                <div class="name">Avversario (P4)</div>
+                <div id="hand-3" class="hand-col opponent-hand"></div>
+            </div>
+
+            <div id="center-area">
+                <div id="tavolo-carte"></div>
+            </div>
+
+            <div id="pos-bottom" class="player-area">
+                <div id="hand-0" class="hand-row my-hand"></div>
+                <div class="name">TU (P1)</div>
+            </div>
+        </div>
+
+        <div id="overlay-msg"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

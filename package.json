@@ -1,0 +1,14 @@
+{
+  "name": "sbarazzina-pro-multiplayer",
+  "version": "1.0.0",
+  "description": "Sbarazzina Pro multiplayer online",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.3",
+    "socket.io": "^4.7.5"
+  }
+}
