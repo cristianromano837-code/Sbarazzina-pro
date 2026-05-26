@@ -14,25 +14,108 @@ let mioPlayerIndex = null;
     - entraStanza(): gli altri giocatori entrano in una stanza gia esistente.
 */
 
+let statoConnessioneStanza = "fuori";
+
+/*
+    Flusso stanza aggiornato:
+    - il giocatore scrive prima il proprio nome.
+    - il campo stanza deve partire vuoto.
+    - chi apre la partita scrive il nome stanza e clicca Crea stanza.
+    - chi si unisce scrive lo stesso nome stanza e clicca Partecipa a stanza.
+
+    Nota: al server inviamo ancora la chiave "codice" per restare compatibili
+    con il backend esistente, ma nell'interfaccia la trattiamo come nome stanza.
+*/
+
+function normalizzaNomeStanza(valore) {
+    return (valore || "")
+        .trim()
+        .replace(/\s+/g, " ")
+        .toUpperCase();
+}
+
+function chiudiMessaggioAttesaStanza() {
+    const ov = document.getElementById("overlay-msg");
+
+    if (!ov) {
+        return;
+    }
+
+    ov.innerHTML = "";
+    ov.className = "";
+}
+
+function setMessaggioStanza(titolo, testo = "") {
+    const ov = document.getElementById("overlay-msg");
+
+    if (!ov) {
+        return;
+    }
+
+    ov.className = "small-message";
+    ov.innerHTML = `
+        <h2>${titolo}</h2>
+        ${testo ? `<p>${testo}</p>` : ""}
+    `;
+}
+
+function aggiornaPulsantiStanza(disabilitati) {
+    const bottoni = document.querySelectorAll(
+        "button[onclick='creaStanza()'], button[onclick=\"creaStanza()\"], " +
+        "button[onclick='entraStanza()'], button[onclick=\"entraStanza()\"], " +
+        "button[onclick='partecipaStanza()'], button[onclick=\"partecipaStanza()\"]"
+    );
+
+    bottoni.forEach(btn => {
+        btn.disabled = disabilitati;
+        btn.classList.toggle("disabled-room-btn", disabilitati);
+    });
+}
+
+function preparaInterfacciaStanza() {
+    const inputCodice = document.getElementById("room-code");
+    const inputNome = document.getElementById("player-name");
+
+    if (inputCodice) {
+        inputCodice.value = "";
+        inputCodice.placeholder = "Nome stanza";
+        inputCodice.autocomplete = "off";
+        inputCodice.addEventListener("input", () => {
+            codiceStanza = normalizzaNomeStanza(inputCodice.value);
+        });
+    }
+
+    if (inputNome) {
+        inputNome.placeholder = "Il tuo nome";
+        inputNome.autocomplete = "nickname";
+        inputNome.addEventListener("input", () => {
+            nomePlayer = inputNome.value.trim();
+        });
+    }
+}
+
 function leggiDatiStanza() {
     const inputCodice = document.getElementById("room-code");
     const inputNome = document.getElementById("player-name");
 
-    const codice = inputCodice ? inputCodice.value.trim().toUpperCase() : "";
+    const codice = normalizzaNomeStanza(inputCodice ? inputCodice.value : "");
     const nome = inputNome ? inputNome.value.trim() : "";
 
     if (!nome) {
-        alert("Scrivi il nome del giocatore");
+        alert("Inserisci prima il tuo nome giocatore");
+        inputNome && inputNome.focus();
         return null;
     }
 
     if (!codice) {
-        alert("Scrivi un codice stanza");
+        alert("Inserisci il nome della stanza");
+        inputCodice && inputCodice.focus();
         return null;
     }
 
-    if (codice.length < 3) {
-        alert("Il codice stanza deve avere almeno 3 caratteri");
+    if (codice.length < 2) {
+        alert("Il nome stanza deve avere almeno 2 caratteri");
+        inputCodice && inputCodice.focus();
         return null;
     }
 
@@ -42,47 +125,94 @@ function leggiDatiStanza() {
 function creaStanza() {
     const dati = leggiDatiStanza();
 
-    if (!dati) {
+    if (!dati || statoConnessioneStanza === "attesa") {
         return;
     }
 
     codiceStanza = dati.codice;
     nomePlayer = dati.nome;
+    statoConnessioneStanza = "attesa";
+    aggiornaPulsantiStanza(true);
+
+    setMessaggioStanza(
+        "Creazione stanza...",
+        `Stanza: <strong>${codiceStanza}</strong>`
+    );
 
     socket.emit("crea-stanza", {
         codice: codiceStanza,
-        nome: nomePlayer
+        stanza: codiceStanza,
+        room: codiceStanza,
+        nome: nomePlayer,
+        playerName: nomePlayer
     });
 }
 
 function entraStanza() {
     const dati = leggiDatiStanza();
 
-    if (!dati) {
+    if (!dati || statoConnessioneStanza === "attesa") {
         return;
     }
 
     codiceStanza = dati.codice;
     nomePlayer = dati.nome;
+    statoConnessioneStanza = "attesa";
+    aggiornaPulsantiStanza(true);
+
+    setMessaggioStanza(
+        "Accesso alla stanza...",
+        `Stanza: <strong>${codiceStanza}</strong>`
+    );
 
     socket.emit("entra-stanza", {
         codice: codiceStanza,
-        nome: nomePlayer
+        stanza: codiceStanza,
+        room: codiceStanza,
+        nome: nomePlayer,
+        playerName: nomePlayer
     });
 }
 
-socket.on("stanza-creata", stato => {
-    const ov = document.getElementById("overlay-msg");
+// Alias utile se il bottone HTML si chiama "Partecipa a stanza".
+function partecipaStanza() {
+    entraStanza();
+}
 
-    if (ov) {
-        ov.className = "small-message";
-        ov.innerHTML = `
-            <h2>Stanza creata</h2>
-            <p>Codice: <strong>${stato.codice || codiceStanza}</strong></p>
-            <p>Condividi questo codice con i tuoi amici.</p>
-        `;
+function gestisciIngressoRiuscito(stato = {}) {
+    statoConnessioneStanza = "dentro";
+    aggiornaPulsantiStanza(false);
+
+    const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
+    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || 1;
+
+    const roomStatus = document.getElementById("room-status");
+
+    if (roomStatus) {
+        roomStatus.innerText = `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
     }
+
+    setMessaggioStanza(
+        `Stanza ${nomeStanza}`,
+        `Giocatori collegati: ${giocatori}/4`
+    );
+}
+
+socket.on("stanza-creata", stato => {
+    statoConnessioneStanza = "dentro";
+    aggiornaPulsantiStanza(false);
+
+    const nomeStanza = stato?.codice || stato?.stanza || stato?.room || codiceStanza;
+
+    setMessaggioStanza(
+        "Stanza creata",
+        `Nome stanza: <strong>${nomeStanza}</strong><br>Condividi questo nome con chi vuole giocare con te.`
+    );
 });
+
+socket.on("entrato-stanza", gestisciIngressoRiuscito);
+socket.on("stanza-unita", gestisciIngressoRiuscito);
+socket.on("join-ok", gestisciIngressoRiuscito);
 
 socket.on("assegna-player", playerIndex => {
     mioPlayerIndex = playerIndex;
@@ -90,25 +220,46 @@ socket.on("assegna-player", playerIndex => {
 });
 
 socket.on("stato-stanza", stato => {
+    statoConnessioneStanza = "dentro";
+    aggiornaPulsantiStanza(false);
+
+    const nomeStanza = stato.codice || stato.stanza || stato.room || codiceStanza;
+    const giocatori = stato.giocatoriConnessi || stato.players || stato.numeroGiocatori || 1;
+
     const roomStatus = document.getElementById("room-status");
 
     if (roomStatus) {
-        roomStatus.innerText = `Stanza ${stato.codice}: ${stato.giocatoriConnessi}/4 giocatori`;
+        roomStatus.innerText = `Stanza ${nomeStanza}: ${giocatori}/4 giocatori`;
     }
 
-    const ov = document.getElementById("overlay-msg");
+    setMessaggioStanza(
+        `Stanza ${nomeStanza}`,
+        `Giocatori collegati: ${giocatori}/4`
+    );
+});
 
-    if (ov) {
-        ov.className = "small-message";
-        ov.innerHTML = `
-            <h2>Stanza ${stato.codice}</h2>
-            <p>Giocatori collegati: ${stato.giocatoriConnessi}/4</p>
-        `;
-    }
+socket.on("partita-iniziata", () => {
+    chiudiMessaggioAttesaStanza();
+});
+
+socket.on("start-partita", () => {
+    chiudiMessaggioAttesaStanza();
+});
+
+socket.on("game-started", () => {
+    chiudiMessaggioAttesaStanza();
 });
 
 socket.on("errore", msg => {
+    statoConnessioneStanza = "fuori";
+    aggiornaPulsantiStanza(false);
     alert(msg);
+});
+
+socket.on("connect_error", () => {
+    statoConnessioneStanza = "fuori";
+    aggiornaPulsantiStanza(false);
+    alert("Connessione al server non riuscita. Riprova tra poco.");
 });
 
 let mazzo = [], tavola = [], mani = [[], [], [], []];
@@ -132,13 +283,206 @@ const CW = 66;
 const CH = 102;
 const PUNTI_VITTORIA = 31;
 
+const DECK_W = CW * 10;
+const DECK_H = CH * 4;
+
+function scalaCarte() {
+    const valore = getComputedStyle(document.documentElement).getPropertyValue("--card-scale");
+    const n = parseFloat(valore);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+function larghezzaCarta() {
+    return CW * scalaCarte();
+}
+
+function altezzaCarta() {
+    return CH * scalaCarte();
+}
+
+function posizioneSfondoCarta(carta) {
+    const semiIndice = {
+        'Oro': 0,
+        'Coppe': 1,
+        'Spade': 2,
+        'Bastoni': 3
+    };
+
+    const scala = scalaCarte();
+    const px = (carta.v - 1) * -CW * scala;
+    const py = semiIndice[carta.s] * -CH * scala;
+
+    return { px, py };
+}
+
+function aggiornaScalaCarte() {
+    const larghezza = window.innerWidth || document.documentElement.clientWidth || 1024;
+    const altezza = window.innerHeight || document.documentElement.clientHeight || 720;
+
+    let scala = 1;
+
+    if (larghezza <= 360) {
+        scala = 0.56;
+    } else if (larghezza <= 480) {
+        scala = 0.62;
+    } else if (larghezza <= 768) {
+        scala = 0.72;
+    } else if (altezza <= 680) {
+        scala = 0.82;
+    }
+
+    document.documentElement.style.setProperty("--card-scale", String(scala));
+}
+
+function applicaFixLayout() {
+    if (document.getElementById("fix-layout-carte-js")) {
+        return;
+    }
+
+    aggiornaScalaCarte();
+
+    const style = document.createElement("style");
+    style.id = "fix-layout-carte-js";
+    style.textContent = `
+        :root {
+            --card-scale: 1;
+            --card-w: calc(${CW}px * var(--card-scale));
+            --card-h: calc(${CH}px * var(--card-scale));
+            --card-gap: clamp(4px, 1.2vw, 10px);
+        }
+
+        #center-area {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: min(92vw, 620px);
+            min-height: min(42vh, 330px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-sizing: border-box;
+            padding: clamp(8px, 2vw, 18px);
+            overflow: visible;
+        }
+
+        #tavolo-carte {
+            width: 100%;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            align-content: center;
+            justify-content: center;
+            gap: var(--card-gap);
+            margin: 0 auto;
+            max-height: 48vh;
+            overflow: visible;
+        }
+
+        #tavolo-carte.table-many-cards {
+            max-height: 52vh;
+            overflow-y: auto;
+            padding: 4px;
+        }
+
+        .hand-row,
+        [id^="hand-"] {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: var(--card-gap);
+            flex-wrap: nowrap;
+        }
+
+        [id^="hand-"].hand-many-cards {
+            flex-wrap: wrap;
+            max-width: min(96vw, 520px);
+        }
+
+        .card {
+            width: var(--card-w) !important;
+            height: var(--card-h) !important;
+            min-width: var(--card-w);
+            min-height: var(--card-h);
+            background-size: calc(${DECK_W}px * var(--card-scale)) calc(${DECK_H}px * var(--card-scale)) !important;
+            box-sizing: border-box;
+            flex: 0 0 auto;
+        }
+
+        .flying-card {
+            position: fixed !important;
+            z-index: 9999;
+            pointer-events: none;
+            transition: left 520ms ease, top 520ms ease, transform 520ms ease, opacity 520ms ease;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                overflow-x: hidden;
+            }
+
+            #center-area {
+                width: 96vw;
+                min-height: 38vh;
+                padding: 6px;
+            }
+
+            #tavolo-carte {
+                max-height: 44vh;
+                gap: 5px;
+            }
+
+            .player-area {
+                max-width: 100vw;
+                box-sizing: border-box;
+            }
+
+            #pos-bottom {
+                left: 50% !important;
+                transform: translateX(-50%);
+                width: 100vw;
+            }
+        }
+
+        @media (max-width: 480px) {
+            #center-area {
+                top: 49%;
+                min-height: 34vh;
+            }
+
+            #tavolo-carte.table-many-cards {
+                max-height: 40vh;
+            }
+
+            [id^="hand-"] {
+                gap: 4px;
+            }
+        }
+    `;
+
+    document.head.appendChild(style);
+    window.addEventListener("resize", () => {
+        aggiornaScalaCarte();
+        render();
+    });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    preparaInterfacciaStanza();
+    applicaFixLayout();
+});
+
 function inizia() {
+    chiudiMessaggioAttesaStanza();
+
     puntiPartita = [0, 0];
     primoDiMano = 0;
     preparaNuovaMano();
 }
 
 function preparaNuovaMano() {
+    chiudiMessaggioAttesaStanza();
+
     mazzo = [];
     tavola = [];
     mani = [[], [], [], []];
@@ -176,9 +520,11 @@ function preparaNuovaMano() {
         tavola = mazzo.splice(0, 4);
     }
 
-    document.getElementById('start-btn').style.display = 'none';
-    document.getElementById('overlay-msg').innerHTML = "";
-    document.getElementById('overlay-msg').className = "";
+    const startBtn = document.getElementById('start-btn');
+
+    if (startBtn) {
+        startBtn.style.display = 'none';
+    }
 
     render();
     nuovaSmazzata();
@@ -239,6 +585,11 @@ async function controllaAccusi(mano, pIdx) {
         aggiornaPunteggioSchermo();
 
         const ov = document.getElementById('overlay-msg');
+
+        if (!ov) {
+            return;
+        }
+
         ov.className = "small-message";
 
         ov.innerHTML =
@@ -271,31 +622,14 @@ function aspetta(ms) {
 }
 
 function renderCartaHTML(c, extraClass = "") {
-    const semiIndice = {
-        'Oro': 0,
-        'Coppe': 1,
-        'Spade': 2,
-        'Bastoni': 3
-    };
+    const pos = posizioneSfondoCarta(c);
 
-    const px = (c.v - 1) * -CW;
-    const py = semiIndice[c.s] * -CH;
-
-    return `<div class="card ${extraClass}" style="background-position: ${px}px ${py}px"></div>`;
+    return `<div class="card ${extraClass}" style="background-position: ${pos.px}px ${pos.py}px"></div>`;
 }
 
 function impostaGraficaCarta(el, carta) {
-    const semiIndice = {
-        'Oro': 0,
-        'Coppe': 1,
-        'Spade': 2,
-        'Bastoni': 3
-    };
-
-    const px = (carta.v - 1) * -CW;
-    const py = semiIndice[carta.s] * -CH;
-
-    el.style.backgroundPosition = `${px}px ${py}px`;
+    const pos = posizioneSfondoCarta(carta);
+    el.style.backgroundPosition = `${pos.px}px ${pos.py}px`;
 }
 
 function rectDaElemento(el) {
@@ -310,7 +644,15 @@ function rectDaElemento(el) {
 }
 
 function render() {
+    aggiornaScalaCarte();
+
     const tDiv = document.getElementById('tavolo-carte');
+
+    if (!tDiv) {
+        return;
+    }
+
+    tDiv.classList.toggle('table-many-cards', tavola.length > 8);
 
     // Le carte sul tavolo sono sempre scoperte
     tDiv.innerHTML = tavola.map((c, i) => {
@@ -331,7 +673,12 @@ function render() {
         const area = document.getElementById(`pos-${['bottom', 'left', 'top', 'right'][i]}`);
         const hDiv = document.getElementById(`hand-${i}`);
 
+        if (!area || !hDiv) {
+            continue;
+        }
+
         area.className = `player-area ${turnoCorrente === i ? 'active' : ''}`;
+        hDiv.classList.toggle('hand-many-cards', mani[i].length > 3);
         hDiv.innerHTML = '';
 
         mani[i].forEach((c, idx) => {
@@ -359,8 +706,16 @@ function render() {
 
 function aggiornaPunteggioSchermo() {
     // Durante la mano mostriamo il totale partita + i punti fatti nella mano corrente.
-    document.getElementById('pA').innerText = puntiPartita[0] + sbarazzine[0];
-    document.getElementById('pB').innerText = puntiPartita[1] + sbarazzine[1];
+    const pA = document.getElementById('pA');
+    const pB = document.getElementById('pB');
+
+    if (pA) {
+        pA.innerText = puntiPartita[0] + sbarazzine[0];
+    }
+
+    if (pB) {
+        pB.innerText = puntiPartita[1] + sbarazzine[1];
+    }
 }
 
 async function tentaGiocata(idx, cartaEl) {
@@ -480,10 +835,10 @@ function rettangoloPartenzaGiocatore(pIdx) {
     const r = area.getBoundingClientRect();
 
     return {
-        left: r.left + r.width / 2 - CW / 2,
-        top: r.top + r.height / 2 - CH / 2,
-        width: CW,
-        height: CH
+        left: r.left + r.width / 2 - larghezzaCarta() / 2,
+        top: r.top + r.height / 2 - altezzaCarta() / 2,
+        width: larghezzaCarta(),
+        height: altezzaCarta()
     };
 }
 
@@ -492,10 +847,10 @@ function rettangoloCentroTavolo() {
     const r = area.getBoundingClientRect();
 
     return {
-        left: r.left + r.width / 2 - CW / 2,
-        top: r.top + r.height / 2 - CH / 2,
-        width: CW,
-        height: CH
+        left: r.left + r.width / 2 - larghezzaCarta() / 2,
+        top: r.top + r.height / 2 - altezzaCarta() / 2,
+        width: larghezzaCarta(),
+        height: altezzaCarta()
     };
 }
 
@@ -506,8 +861,8 @@ function creaCartaVolante(carta, rect, classExtra = "") {
 
     el.style.left = rect.left + "px";
     el.style.top = rect.top + "px";
-    el.style.width = CW + "px";
-    el.style.height = CH + "px";
+    el.style.width = larghezzaCarta() + "px";
+    el.style.height = altezzaCarta() + "px";
 
     document.body.appendChild(el);
     return el;
@@ -536,10 +891,10 @@ async function animaPrese(cartaGiocata, prese, pIdx) {
     const destRectOriginale = destinazione.getBoundingClientRect();
 
     const destRect = {
-        left: destRectOriginale.left + destRectOriginale.width / 2 - CW / 2,
-        top: destRectOriginale.top + destRectOriginale.height / 2 - CH / 2,
-        width: CW,
-        height: CH
+        left: destRectOriginale.left + destRectOriginale.width / 2 - larghezzaCarta() / 2,
+        top: destRectOriginale.top + destRectOriginale.height / 2 - altezzaCarta() / 2,
+        width: larghezzaCarta(),
+        height: altezzaCarta()
     };
 
     let carteDaAnimare = [];
@@ -878,6 +1233,7 @@ function mostraTabellaFinale(righe, puntiMano) {
         </div>
     `;
 }
+
 function mostraPiantino() {
     const piantino = document.createElement("div");
     piantino.className = "piantino-emoji";
