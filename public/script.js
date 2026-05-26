@@ -479,7 +479,13 @@ let puntiPartita = [0, 0];
 // 0 = Tu, 1 = P2, 2 = P3, 3 = P4
 let primoDiMano = 0;
 
-// Serve per il buon gioco: chi accusa tiene le carte scoperte fino a fine smazzata.
+/*
+    Gestione carte scoperte per accuso / buon gioco:
+    - quando vengono distribuite 3 carte, si resetta tutto;
+    - se un giocatore accusa, le sue carte restano scoperte;
+    - restano scoperte fino a quando tutti finiscono quelle 3 carte;
+    - quando vengono date 3 nuove carte, si richiudono.
+*/
 let buonGiocoScoperto = [false, false, false, false];
 
 // Dimensioni singola carta nello sheet
@@ -740,8 +746,7 @@ function preparaNuovaMano() {
     sbarazzine = [0, 0];
     ultimoAPrendere = -1;
 
-    // Qui è la modifica importante:
-    // il turno iniziale della mano è deciso da primoDiMano.
+    // Il turno iniziale della mano completa è deciso da primoDiMano.
     turnoCorrente = primoDiMano;
 
     staAnimando = false;
@@ -749,6 +754,8 @@ function preparaNuovaMano() {
     carteSelezionate = [];
     cartaInSospeso = null;
     partenzaCartaInSospeso = null;
+
+    // Quando inizia una nuova mano completa, nessun accuso precedente deve restare scoperto.
     buonGiocoScoperto = [false, false, false, false];
 
     const semi = ['Oro', 'Coppe', 'Spade', 'Bastoni'];
@@ -788,7 +795,14 @@ async function prossimaMano() {
 }
 
 async function nuovaSmazzata() {
-    // Ogni nuova smazzata da 3 carte resetta il buon gioco scoperto
+    /*
+        Qui vengono date 3 nuove carte a tutti.
+
+        Questo è il punto giusto in cui resettare le carte scoperte:
+        - se nella smazzata precedente un giocatore aveva accusato, ora si richiude;
+        - se nella nuova smazzata accusa di nuovo, controllaAccusi lo riaprirà;
+        - quindi le carte restano visibili fino alla fine delle 3 carte in mano.
+    */
     buonGiocoScoperto = [false, false, false, false];
 
     for (let i = 0; i < 4; i++) {
@@ -830,6 +844,8 @@ async function controllaAccusi(mano, pIdx) {
     }
 
     if (pts > 0) {
+        // Questa riga è quella che rende visibili le carte del giocatore.
+        // Rimane true fino alla prossima chiamata di nuovaSmazzata().
         buonGiocoScoperto[pIdx] = true;
 
         sbarazzine[squadra] += pts;
@@ -943,8 +959,13 @@ function render() {
         mani[i].forEach((c, idx) => {
             let cardHTML = document.createElement('div');
 
-            // Tu vedi sempre le tue carte.
-            // Gli altri giocatori mostrano le carte solo se hanno fatto buon gioco.
+            /*
+                Regola visibilità:
+                - la tua mano è sempre visibile;
+                - gli altri restano coperti;
+                - se hanno fatto accuso nella smazzata corrente, restano scoperti
+                  finché tutti finiscono quelle 3 carte e parte nuovaSmazzata().
+            */
             if (i === 0 || buonGiocoScoperto[i]) {
                 cardHTML.className = 'card';
                 impostaGraficaCarta(cardHTML, c);
@@ -964,7 +985,6 @@ function render() {
 }
 
 function aggiornaPunteggioSchermo() {
-    // Durante la mano mostriamo il totale partita + i punti fatti nella mano corrente.
     const pA = document.getElementById('pA');
     const pB = document.getElementById('pB');
 
@@ -1202,6 +1222,11 @@ function concludiMossa() {
 
     render();
 
+    /*
+        Quando tutti finiscono le 3 carte:
+        - se c'è ancora mazzo, parte nuovaSmazzata();
+        - nuovaSmazzata() richiude gli accusi precedenti e dà 3 nuove carte.
+    */
     if (mani.every(m => m.length === 0)) {
         if (mazzo.length > 0) {
             nuovaSmazzata();
